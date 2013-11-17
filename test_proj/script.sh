@@ -1,13 +1,14 @@
+# PIPELINE: next_proj
 echo "this..."
 
-sleep 5
+sleep 2
 
 echo "is..."
 
-sleep 5
+sleep 2
 
 echo "a..."
 
-sleep 5
+sleep 2
 
 echo "test build script."

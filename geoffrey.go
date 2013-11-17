@@ -7,6 +7,8 @@ import (
         "path/filepath"
         "sort"
         "strconv"
+	"regexp"
+	"errors"
         "os"
         "io/ioutil"
         "os/exec"
@@ -84,31 +86,50 @@ func runProcessHandler(w http.ResponseWriter, r *http.Request) {
                 return
 	}
 
-        // Get build number
-	num, e := numFilesByGlob(name+"/log*")
-        if e!=nil || num < 0 {
-		fmt.Fprintf(w, "Can't list log files: %v", e)
-                return
-        }
-        num++;
-
         // Print build details
         fmt.Fprintf(w, "Running...<br /><br />")
-        fmt.Fprintf(w, "<a href='log/"+name+"/log"+strconv.Itoa(num)+".txt'>log</a>");
+	// TODO We can't tell the user what their log number is yet
+        fmt.Fprintf(w, "<a href='list'>index</a>");
 
         // Run process
-        go runProcess(w, name, num)
+        go runProcess(name)
 }
 
-func runProcess(w http.ResponseWriter, name string, num int) {
-        fmt.Println(name)
+func runProcess(name string) {
+	num, err := findNextLogfileNumber(name)
+	// TODO: The user won't know if this failure has happened
+	if err != nil {
+		fmt.Printf("Error: %v", err);
+		return;
+	}
+	fmt.Println("Log number ", num)
+        runProcessAndOutputLog(name, num)
+}
+
+func findNextLogfileNumber(name string) (int, error) {
+	num, e := numFilesByGlob(name+"/log*")
+        if e!=nil || num < 0 {
+		return -1, errors.New("Can't list log files in the project directory.")
+        }
+        num++;
+	return num, nil
+}
+
+func numFilesByGlob(dir string) (int, error) {
+        files, e := filepath.Glob(dir)
+        return len(files), e
+}
+
+func runProcessAndOutputLog(name string, num int) {
+	fmt.Printf("STARTED BUILD SCRIPT: %v\n", name)
         // Run command
         cmd := exec.Command("bash", "./"+name+"/script.sh")
 
         // Get log file
         outfile, err := os.Create(name+"/log"+strconv.Itoa(num)+".txt")
         if err != nil {
-                fmt.Fprintf(w, "%v", err)
+		// TODO: The uesr won't know if this has happened
+                fmt.Printf("%v\n", err)
                 return
         }
         defer outfile.Close()
@@ -116,15 +137,45 @@ func runProcess(w http.ResponseWriter, name string, num int) {
 
         // Run command
         err = cmd.Run()
+	fmt.Printf("FINISHED BUILD SCRIPT: %v\n", name)
         if err != nil {
-                fmt.Fprintf(w, "%v", err)
-                return
-        }
+                fmt.Printf("%v\n", err)
+        } else {
+		runPipelineProjects(name)
+	}
+	return
 }
 
-func numFilesByGlob(dir string) (int, error) {
-        files, e := filepath.Glob(dir)
-        return len(files), e
+func runPipelineProjects(name string) {
+	pipelineProjects, err := findPiplineProjects(name)
+	if err != nil {
+		fmt.Printf("Error: Pipline projects: %v\n", err);
+	} else if pipelineProjects != nil {
+		fmt.Printf("Found pipeline projects, %v\n", pipelineProjects);
+		for _, v := range pipelineProjects {
+			runProcess(v)
+		}
+	}
+}
+
+func findPiplineProjects(name string) ([]string, error) {
+	rf, err := ioutil.ReadFile(name+"/script.sh")
+	if err != nil {
+		return nil, err
+	}
+	file := string(rf)
+
+	rp := regexp.MustCompile("# PIPELINE: (.*)")
+	matches := rp.FindAllStringSubmatch(file, -1)
+
+	m := make([]string, 0)
+	if matches != nil {
+		for _ ,v := range matches {
+			m = append(m, v[1])
+		}
+		return m, nil
+	}
+	return nil, nil
 }
 
 // Log handler
@@ -140,4 +191,3 @@ func printLogHandler(w http.ResponseWriter, r *http.Request) {
                 fmt.Fprintf(w, string(fileBytes))
         }
 }
-
